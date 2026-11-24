@@ -63,7 +63,8 @@ slopoed · чистота 14/100 · НЕ ПРОХОДИТ (порог 88) · ж�
 
 ### С агентом
 
-Claude Code, Codex, Cursor и другие агенты со скиллами. Нужен Python 3.9+, зависимостей нет.
+Claude Code, Codex, Cursor и другие агенты со скиллами. Нужен Python 3.9+ без зависимостей; в CI
+проверяются версии 3.10, 3.12 и 3.13.
 
 ```bash
 git clone https://github.com/Wad-man/slopoed.git ~/.agents/skills/slopoed
