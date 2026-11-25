@@ -21,5 +21,7 @@ jobs:
         run: python tests/test_lint.py
       - name: README passes its own linter
         run: python scripts/lint.py README.md --genre article
+      - name: Quality research report passes the linter
+        run: python scripts/lint.py docs/quality-research.md --genre article
       - name: Docs have no mixed-script words
         run: python tools/prooftext.py --fail-on-hit

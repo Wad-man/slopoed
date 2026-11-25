@@ -7,7 +7,8 @@
     python3 tools/prooftext.py                # напечатать находки
     python3 tools/prooftext.py --fail-on-hit  # код возврата 1, если находки есть (для CI)
 
-Код в обратных кавычках, блоки разметки и разделы «English» не проверяются.
+Код в обратных кавычках, блоки разметки и разделы «English» не проверяются. Английские
+слова-связки в строках таблиц не считаются находкой: там бывают названия работ.
 """
 import os
 import re
@@ -47,7 +48,9 @@ def scan(path):
             if in_code or english:
                 continue
             text = re.sub(r"`[^`]*`", "", line)
-            for word in MIXED.findall(text) + STRAY.findall(text):
+            # В таблицах бывают названия работ на английском: там ищутся только омоглифы.
+            stray = [] if line.lstrip().startswith("|") else STRAY.findall(text)
+            for word in MIXED.findall(text) + stray:
                 yield os.path.relpath(path, ROOT), number, word, line.strip()[:100]
 
 

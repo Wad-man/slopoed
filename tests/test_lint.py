@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Тесты линтера и очистки. Без зависимостей.
+"""Тесты линтера, очистки и профиля качества. Без зависимостей.
 
     python3 tests/test_lint.py
 """
@@ -16,6 +16,7 @@ SCRIPTS = os.path.join(ROOT, "scripts")
 FIXTURES = os.path.join(HERE, "fixtures")
 sys.path.insert(0, SCRIPTS)
 import lint  # noqa: E402
+import quality  # noqa: E402
 import sanitize  # noqa: E402
 
 with open(lint.RULES_PATH, encoding="utf-8") as _fh:
@@ -193,6 +194,123 @@ class Paths(unittest.TestCase):
             from_stdin = subprocess.run([sys.executable, os.path.join(SCRIPTS, "lint.py"), "-", "--genre", "post"],
                                         input="Пост из stdin.", capture_output=True, text=True, encoding="utf-8", cwd=tmp)
             self.assertEqual(from_stdin.returncode, 0, from_stdin.stderr)
+
+
+class Quality(unittest.TestCase):
+    TEXT = ("# Заголовок из трех слов\n\nЯ пришёл на рынок в семь утра. Продавец сказал: «Свежее, сегодня везли».\n\n"
+            "## Цены\n\n| Товар | Цена |\n|---|---|\n| Молоко | 80 руб |\n\n"
+            "```python\nprint('Привет, мир! Это код.')\n```\n\n- первый пункт;\n- второй пункт.\n\n"
+            "![Картинка](https://example.org/a.png) и [ссылка](https://example.org).\n")
+
+    def test_profile_counts_what_lives_in_markup_and_voice(self):
+        m = quality.profile(self.TEXT)
+        self.assertEqual(m["title"], "Заголовок из трех слов")
+        self.assertEqual(m["title_len"], 22)
+        self.assertEqual((m["tables"], m["code"], m["images"], m["links"], m["headings"], m["lists"]), (1, 1, 1, 1, 2, 2))
+        # Слова считаются как в карте линтера: проза и списки, без заголовков, таблиц, кода и картинок.
+        self.assertEqual(m["words"], 18)
+        self.assertGreater(m["numbers"], 0)
+        self.assertGreater(m["first"], 0)
+        self.assertGreater(m["dialogue"], 0)
+        # «!» из разметки картинки — не восклицание; реплики «— …» в одном абзаце — диалог.
+        self.assertEqual(m["excl"], 0)
+        talk = quality.profile("Он сказал:\n— Ты придёшь?\n— Приду.\nВот и договорились.\n")
+        self.assertGreater(talk["dialogue"], 0)
+        self.assertGreater(talk["questions"], 0)
+        self.assertEqual(m["title_question"], 0)
+
+    def test_profile_without_heading_reports_no_title(self):
+        m = quality.profile("Письмо без заголовка. Читатель понимает всё сразу.")
+        self.assertIsNone(m["title_len"])
+        self.assertEqual(m["title"], "")
+        self.assertEqual(m["title_bold"], 0)
+
+    def test_bold_first_line_is_a_heading_not_a_paragraph(self):
+        text = "**Исследование: перенос митапа**\n\nМитап перенесли в онлайн по причине пандемии, и это подтверждено.\n\n" \
+               "Второй абзац с другим числом слов для проверки, что первый абзац считается со следующего.\n"
+        m = quality.profile(text)
+        self.assertEqual(m["title_len"], len("Исследование: перенос митапа"))
+        self.assertEqual(m["title_bold"], 1)
+        # Первый абзац считается со следующего за заголовком.
+        self.assertEqual(m["lead"], 10)
+        self.assertIn("набран жирной строкой", quality.render(quality.analyze(text, "expert")))
+        inline = quality.profile("Первый абзац с **одним жирным словом** внутри.\n\nВторой абзац текста.")
+        self.assertEqual((inline["title_bold"], inline["title_len"]), (0, None))
+
+    def test_placeholders_are_not_counted_as_text(self):
+        text = "Организацию перенесли в онлайн. [На какой платформе прошёл митап?] Пандемия стала причиной.\n\n" \
+               "Ссылка [на источник](https://example.org/a) и цифра 12 остаются в счёте.\n"
+        result = quality.analyze(text, "expert")
+        m = result["metrics"]
+        self.assertEqual(result["placeholders"], 1)
+        self.assertEqual(m["questions"], 0)
+        self.assertNotIn("платформе", str(result["title"]))
+        self.assertGreater(m["numbers"], 0)
+        self.assertIn("в расчёт не входили: 1", quality.render(result))
+        # Для подсчёта ориентиров по живым текстам квадратные скобки остаются частью текста.
+        self.assertGreater(quality.profile(text)["questions"], 0)
+        # Текст ссылки без круглых скобок к плейсхолдерам не относится.
+        link_only = quality.analyze("Текст ссылки [на источник] остаётся. Вопрос? Один, настоящий.", "expert")
+        self.assertEqual((link_only["placeholders"], link_only["metrics"]["questions"] > 0), (1, True))
+
+    def test_guide_flags_and_missing_guide(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            guide = make_file(tmp, "guide", json.dumps({
+                "sources": {"story": "тестовая выборка"},
+                "types": {"story": {"ranges": {"words": [100, 900], "code": [0, 0], "title_len": [20, 80]},
+                                    "share": {"code": 4.0}}}}))
+            short = quality.analyze("Короткий пост.", "story", guide)
+            rows = {row["key"]: row for row in short["rows"]}
+            self.assertEqual(rows["words"]["flag"], "ниже обычного")
+            self.assertEqual(rows["code"]["guide"], "0 (4%)")
+            self.assertEqual(rows["first"]["guide"], "")
+            self.assertEqual(rows["title_len"]["flag"], "заголовка нет")
+            self.assertIn("тестовая выборка", quality.render(short))
+            long = quality.analyze("Слово. " * 1000, "story", guide)
+            self.assertEqual({row["key"]: row for row in long["rows"]}["words"]["flag"], "выше обычного")
+        bare = quality.analyze("Слово.", "other")
+        self.assertEqual(bare["source"], "")
+        self.assertTrue(all(row["flag"] == "" for row in bare["rows"]))
+
+    def test_cli_profile_json_stdin_and_root(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            target = make_file(outside, "q", self.TEXT)
+
+            def run(*args, **kwargs):
+                return subprocess.run([sys.executable, os.path.join(SCRIPTS, "quality.py"), *args],
+                                      capture_output=True, text=True, encoding="utf-8", cwd=tmp, **kwargs)
+
+            self.assertEqual(run(target).returncode, 2)
+            self.assertIn("вне рабочей папки", run(target).stderr)
+            allowed = run(target, "--type", "expert", "--root", outside, "--json")
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            result = json.loads(allowed.stdout)
+            self.assertEqual((result["type"], result["metrics"]["tables"]), ("expert", 1))
+            self.assertEqual(len(result["rows"]), len(quality.ROWS))
+            plain = run(target, "--type", "expert", "--root", outside)
+            self.assertIn("тип: экспертный материал", plain.stdout)
+            self.assertTrue(all(line == line.rstrip() for line in plain.stdout.splitlines()))
+            from_stdin = run("-", "--type", "seo", input=self.TEXT)
+            self.assertEqual(from_stdin.returncode, 0, from_stdin.stderr)
+            self.assertEqual(run("-", "--type", "nope", input="x").returncode, 2)
+
+    def test_guide_file_is_consistent(self):
+        with open(quality.QUALITY_PATH, encoding="utf-8") as fh:
+            spec = json.load(fh)
+        keys = {row[0] for row in quality.ROWS}
+        covered = 0
+        for kind in quality.TYPES:
+            entry = spec["types"].get(kind) or {}
+            for key, (low, high) in entry.get("ranges", {}).items():
+                self.assertIn(key, keys, (kind, key))
+                self.assertLessEqual(low, high, (kind, key))
+            for key in entry.get("share", {}):
+                self.assertIn(key, quality.SHARE_KEYS, (kind, key))
+            if entry.get("ranges"):
+                covered += 1
+                self.assertTrue(spec["sources"].get(kind), kind)
+        # Ориентиры собраны хотя бы для экспертного материала и истории.
+        self.assertGreaterEqual(covered, 2)
 
 
 class Spec(unittest.TestCase):

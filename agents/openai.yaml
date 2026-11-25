@@ -1,3 +1,3 @@
 interface:
   display_name: "slopoed"
-  short_description: "Редактор русского текста против ИИ-слопа"
+  short_description: "Редактор и автор русского текста: чистит, пишет, оценивает"

@@ -387,7 +387,8 @@ def map_rows(spec, m, genre):
         if key not in m or key not in ref:
             continue
         value, norm = m[key], ref[key]
-        lo, mid, hi = norm[1], norm[3], norm[5]
+        # В карте печатаются те же пороги, по которым ставится пометка: 25-й, 50-й и 75-й персентиль.
+        lo, mid, hi = norm[2], norm[3], norm[4]
         concern = row["concern"]
         if concern == "genre" and genre != "post":
             concern = "none"
@@ -489,7 +490,7 @@ def render_breakdown(breakdown):
 
 
 def render_map(rows):
-    out = ["", "КАРТА ТЕКСТА                                   текст      человек: 10% · медиана · 90%"]
+    out = ["", "КАРТА ТЕКСТА                                   текст      человек: 25% · медиана · 75%"]
     for r in rows:
         out.append("  {:<38} {:>6}       {:>6} · {:>6} · {:>6}   {}".format(
             r["name"][:38], fmt(r["value"], r["kind"]), fmt(r["lo"], r["kind"]), fmt(r["mid"], r["kind"]),
